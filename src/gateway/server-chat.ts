@@ -5,6 +5,7 @@ import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
+import { loadApnsRegistration, resolveApnsAuthConfigFromEnv, sendApnsAlert } from "../infra/push-apns.js";
 import { loadSessionEntry } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
 
@@ -326,6 +327,8 @@ export type AgentEventHandlerOptions = {
   resolveSessionKeyForRun: (runId: string) => string | undefined;
   clearAgentRunContext: (runId: string) => void;
   toolEventRecipients: ToolEventRecipientRegistry;
+  nodeRegistry: import("./node-registry.js").NodeRegistry;
+  getSubscribersForSession: (sessionKey: string) => string[];
 };
 
 export function createAgentEventHandler({
@@ -337,6 +340,8 @@ export function createAgentEventHandler({
   resolveSessionKeyForRun,
   clearAgentRunContext,
   toolEventRecipients,
+  nodeRegistry,
+  getSubscribersForSession,
 }: AgentEventHandlerOptions) {
   const emitChatDelta = (
     sessionKey: string,
@@ -490,6 +495,34 @@ export function createAgentEventHandler({
       };
       broadcast("chat", payload);
       nodeSendToSession(sessionKey, "chat", payload);
+
+      // Fire-and-forget: push notification to disconnected subscribers
+      if (text && !shouldSuppressSilent) {
+        void (async () => {
+          try {
+            const subscribers = getSubscribersForSession(sessionKey);
+            if (subscribers.length === 0) return;
+            const auth = await resolveApnsAuthConfigFromEnv();
+            if (!auth.ok) return;
+            for (const subscriberId of subscribers) {
+              if (nodeRegistry.get(subscriberId)) continue; // still connected
+              const registration = await loadApnsRegistration(subscriberId);
+              if (!registration) continue;
+              const truncatedBody = text.length > 200 ? text.slice(0, 197) + "\u2026" : text;
+              await sendApnsAlert({
+                auth: auth.value,
+                registration,
+                nodeId: subscriberId,
+                title: "OpenClaw",
+                body: truncatedBody,
+              }).catch(() => {});
+            }
+          } catch {
+            // Silently ignore push failures
+          }
+        })();
+      }
+
       return;
     }
     const payload = {

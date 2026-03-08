@@ -1,6 +1,7 @@
 import {
   loadApnsRegistration,
   normalizeApnsEnvironment,
+  registerApnsToken,
   resolveApnsAuthConfigFromEnv,
   sendApnsAlert,
 } from "../../infra/push-apns.js";
@@ -69,5 +70,37 @@ export const pushHandlers: GatewayRequestHandlers = {
       });
       respond(true, result, undefined);
     });
+  },
+
+  "push.register": async ({ params, client, respond }) => {
+    const token = typeof params.token === "string" ? params.token.trim() : "";
+    const topic = typeof params.topic === "string" ? params.topic.trim() : "";
+    const environment = params.environment;
+
+    if (!token) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "token required"));
+      return;
+    }
+    if (!topic) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "topic required"));
+      return;
+    }
+
+    const nodeId =
+      (client?.connect?.device?.id as string | undefined) ??
+      (client?.connect?.client?.id as string | undefined) ??
+      "";
+    if (!nodeId) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "device identity required"));
+      return;
+    }
+
+    try {
+      await registerApnsToken({ nodeId, token, topic, environment });
+      respond(true, { nodeId, registered: true }, undefined);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, message));
+    }
   },
 };

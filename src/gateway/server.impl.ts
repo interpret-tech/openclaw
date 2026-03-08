@@ -726,6 +726,8 @@ export async function startGatewayServer(
           resolveSessionKeyForRun,
           clearAgentRunContext,
           toolEventRecipients,
+          nodeRegistry,
+          getSubscribersForSession: nodeSubscriptions.getSubscribersForSession,
         }),
       );
 

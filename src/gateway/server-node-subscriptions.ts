@@ -27,6 +27,7 @@ export type NodeSubscriptionManager = {
     listConnected?: NodeListConnectedFn | null,
     sendEvent?: NodeSendEventFn | null,
   ) => void;
+  getSubscribersForSession: (sessionKey: string) => string[];
   clear: () => void;
 };
 
@@ -147,6 +148,18 @@ export function createNodeSubscriptionManager(): NodeSubscriptionManager {
     }
   };
 
+  const getSubscribersForSession = (sessionKey: string): string[] => {
+    const normalizedSessionKey = sessionKey.trim();
+    if (!normalizedSessionKey) {
+      return [];
+    }
+    const subs = sessionSubscribers.get(normalizedSessionKey);
+    if (!subs || subs.size === 0) {
+      return [];
+    }
+    return Array.from(subs);
+  };
+
   const clear = () => {
     nodeSubscriptions.clear();
     sessionSubscribers.clear();
@@ -159,6 +172,7 @@ export function createNodeSubscriptionManager(): NodeSubscriptionManager {
     sendToSession,
     sendToAllSubscribed,
     sendToAllConnected,
+    getSubscribersForSession,
     clear,
   };
 }
