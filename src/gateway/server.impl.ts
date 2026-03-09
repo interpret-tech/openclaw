@@ -714,6 +714,14 @@ export async function startGatewayServer(
     }));
   }
 
+  // Check if an operator device is currently connected via WebSocket
+  const isOperatorDeviceConnected = (deviceId: string): boolean => {
+    for (const client of clients) {
+      if (client.connect.device?.id === deviceId) return true;
+    }
+    return false;
+  };
+
   const agentUnsub = minimalTestGateway
     ? null
     : onAgentEvent(
@@ -728,6 +736,7 @@ export async function startGatewayServer(
           toolEventRecipients,
           nodeRegistry,
           getSubscribersForSession: nodeSubscriptions.getSubscribersForSession,
+          isOperatorDeviceConnected,
         }),
       );
 

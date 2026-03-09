@@ -57,6 +57,9 @@ describe("agent event handler", () => {
       resolveSessionKeyForRun: params?.resolveSessionKeyForRun ?? (() => undefined),
       clearAgentRunContext: vi.fn(),
       toolEventRecipients,
+      nodeRegistry: { get: () => undefined } as unknown as import("./node-registry.js").NodeRegistry,
+      getSubscribersForSession: () => [],
+      isOperatorDeviceConnected: () => false,
     });
 
     return {

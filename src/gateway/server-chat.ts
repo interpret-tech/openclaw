@@ -5,7 +5,12 @@ import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
-import { loadApnsRegistration, resolveApnsAuthConfigFromEnv, sendApnsAlert } from "../infra/push-apns.js";
+import {
+  loadAllApnsRegistrationNodeIds,
+  loadApnsRegistration,
+  resolveApnsAuthConfigFromEnv,
+  sendApnsAlert,
+} from "../infra/push-apns.js";
 import { loadSessionEntry } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
 
@@ -329,6 +334,7 @@ export type AgentEventHandlerOptions = {
   toolEventRecipients: ToolEventRecipientRegistry;
   nodeRegistry: import("./node-registry.js").NodeRegistry;
   getSubscribersForSession: (sessionKey: string) => string[];
+  isOperatorDeviceConnected: (deviceId: string) => boolean;
 };
 
 export function createAgentEventHandler({
@@ -342,6 +348,7 @@ export function createAgentEventHandler({
   toolEventRecipients,
   nodeRegistry,
   getSubscribersForSession,
+  isOperatorDeviceConnected,
 }: AgentEventHandlerOptions) {
   const emitChatDelta = (
     sessionKey: string,
@@ -500,12 +507,20 @@ export function createAgentEventHandler({
       if (text && !shouldSuppressSilent) {
         void (async () => {
           try {
-            const subscribers = getSubscribersForSession(sessionKey);
-            if (subscribers.length === 0) return;
             const auth = await resolveApnsAuthConfigFromEnv();
             if (!auth.ok) return;
-            for (const subscriberId of subscribers) {
-              if (nodeRegistry.get(subscriberId)) continue; // still connected
+
+            // Collect node session subscribers AND all push-registered device IDs
+            // (operator-role iOS clients register via push.register but never
+            // subscribe via the node subscription system)
+            const sessionSubscribers = getSubscribersForSession(sessionKey);
+            const allRegisteredIds = await loadAllApnsRegistrationNodeIds();
+            const candidateIds = new Set([...sessionSubscribers, ...allRegisteredIds]);
+            if (candidateIds.size === 0) return;
+
+            for (const subscriberId of candidateIds) {
+              if (nodeRegistry.get(subscriberId)) continue; // node still connected
+              if (isOperatorDeviceConnected(subscriberId)) continue; // operator still connected
               const registration = await loadApnsRegistration(subscriberId);
               if (!registration) continue;
               const truncatedBody = text.length > 200 ? text.slice(0, 197) + "\u2026" : text;

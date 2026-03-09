@@ -232,6 +232,11 @@ export async function registerApnsToken(params: {
   });
 }
 
+export async function loadAllApnsRegistrationNodeIds(baseDir?: string): Promise<string[]> {
+  const state = await loadRegistrationsState(baseDir);
+  return Object.keys(state.registrationsByNodeId);
+}
+
 export async function loadApnsRegistration(
   nodeId: string,
   baseDir?: string,
