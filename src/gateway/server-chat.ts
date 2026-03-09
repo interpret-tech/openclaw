@@ -11,8 +11,11 @@ import {
   resolveApnsAuthConfigFromEnv,
   sendApnsAlert,
 } from "../infra/push-apns.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { loadSessionEntry } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
+
+const logPush = createSubsystemLogger("gateway").child("push");
 
 function resolveHeartbeatAckMaxChars(): number {
   try {
@@ -508,7 +511,10 @@ export function createAgentEventHandler({
         void (async () => {
           try {
             const auth = await resolveApnsAuthConfigFromEnv();
-            if (!auth.ok) return;
+            if (!auth.ok) {
+              logPush.info(`[chat-push] skipped: APNs auth not configured (${auth.error})`);
+              return;
+            }
 
             // Collect node session subscribers AND all push-registered device IDs
             // (operator-role iOS clients register via push.register but never
@@ -516,24 +522,48 @@ export function createAgentEventHandler({
             const sessionSubscribers = getSubscribersForSession(sessionKey);
             const allRegisteredIds = await loadAllApnsRegistrationNodeIds();
             const candidateIds = new Set([...sessionSubscribers, ...allRegisteredIds]);
+            logPush.info(
+              `[chat-push] session=${sessionKey} subscribers=${sessionSubscribers.length} registered=${allRegisteredIds.length} candidates=${candidateIds.size}`,
+            );
             if (candidateIds.size === 0) return;
 
             for (const subscriberId of candidateIds) {
-              if (nodeRegistry.get(subscriberId)) continue; // node still connected
-              if (isOperatorDeviceConnected(subscriberId)) continue; // operator still connected
+              const suffix = subscriberId.slice(-8);
+              if (nodeRegistry.get(subscriberId)) {
+                logPush.info(`[chat-push] skip …${suffix}: node still connected`);
+                continue;
+              }
+              if (isOperatorDeviceConnected(subscriberId)) {
+                logPush.info(`[chat-push] skip …${suffix}: operator WS still connected`);
+                continue;
+              }
               const registration = await loadApnsRegistration(subscriberId);
-              if (!registration) continue;
+              if (!registration) {
+                logPush.info(`[chat-push] skip …${suffix}: no APNs registration`);
+                continue;
+              }
               const truncatedBody = text.length > 200 ? text.slice(0, 197) + "\u2026" : text;
-              await sendApnsAlert({
+              logPush.info(
+                `[chat-push] sending to …${suffix} env=${registration.environment} topic=${registration.topic}`,
+              );
+              const result = await sendApnsAlert({
                 auth: auth.value,
                 registration,
                 nodeId: subscriberId,
                 title: "OpenClaw",
                 body: truncatedBody,
-              }).catch(() => {});
+              }).catch((err) => {
+                logPush.warn(`[chat-push] send failed for …${suffix}: ${String(err)}`);
+                return null;
+              });
+              if (result) {
+                logPush.info(
+                  `[chat-push] result for …${suffix}: ok=${result.ok} status=${result.status} apnsId=${result.apnsId ?? "n/a"} reason=${result.reason ?? "n/a"}`,
+                );
+              }
             }
-          } catch {
-            // Silently ignore push failures
+          } catch (err) {
+            logPush.warn(`[chat-push] unexpected error: ${String(err)}`);
           }
         })();
       }
